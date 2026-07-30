@@ -33,6 +33,34 @@ precisa da vossa passagem pelo Android Studio antes de ir para o telemóvel.
 | Modo dispositivo dedicado | `deviceowner/DeviceOwnerReceiver.kt` | `DeviceAdminReceiver` para aprovisionamento Device Owner. Regista eventos de ativação/desativação. |
 | Deteção de root | `rootdetection/RootDetector.kt` | Heurística de ficheiros/binário `su` conhecidos. É um sinal, não uma garantia — a mesma honestidade que o `netguard/README.md` já assume para a sua própria lista de MAC autorizados. |
 | Eventos partilhados | `shared/EventLogger.kt` | Grava `events.jsonl` no armazenamento privado da app, com o mesmo formato de severidade (`critico`/`aviso`/`info`) do `netguard/netguard.py`, para que um relatório futuro possa juntar os dois. |
+| Portas sensíveis alargadas | `vpnmonitor/NetworkMonitorService.kt` | Passou de vigiar só 23/3389 para uma lista de 11 portas (SSH, SMB, bases de dados, VNC, TR-069, etc.) — regista uma vez por sessão, não por pacote. |
+| Segurança do Wi-Fi | `wifisecurity/WifiSecurityChecker.kt` | Lê as capacidades anunciadas pelo ponto de acesso a que está ligado (aberto/WEP/WPA) a partir do último scan — a mesma informação que o seletor de Wi-Fi do Android já mostra. |
+| Deteção de mudança de gateway (ARP) | `arpmonitor/GatewayMonitor.kt` | Equivalente ao `gateway_mac_changed` do `netguard/netguard.py`: compara o MAC do router com o último conhecido. Em Android 10+ sem root, `/proc/net/arp` pode estar ilegível — nesse caso devolve `DEGRADED`, nunca finge que verificou. |
+| Relatório na app | `report/ReportActivity.kt` | Lê `events.jsonl` e mostra os eventos de aviso/crítico mais recentes primeiro — o "registo dos IPs/portas sinalizados" dentro da própria app. |
+| VPN cifrada (WireGuard) | `wireguard/` | Cliente oficial WireGuard (`com.wireguard.android:tunnel`) — **não é criptografia escrita à mão**. Ver aviso abaixo. |
+
+## Sobre o "VPN hyper segura" (WireGuard)
+
+Isto **não é o mesmo tipo de VPN** que o monitor de rede. O monitor
+(`vpnmonitor/`) intercepta pacotes localmente para os inspecionar, mas o
+tráfego continua a sair de casa sem cifra extra. O módulo `wireguard/`
+cifra o tráfego até um servidor fora da rede doméstica — é isto que
+protege contra alguém com acesso ao router (administrador mal-intencionado,
+ISP, ou um atacante que já esteja na LAN).
+
+**Isto precisa de um servidor WireGuard que o utilizador já tenha** — a
+app não cria um do nada. Duas opções:
+
+1. **Servidor próprio**: um VPS barato (DigitalOcean, Hetzner, etc.) com
+   WireGuard instalado — dá controlo total, sem confiar em terceiros.
+2. **Fornecedor comercial**: qualquer VPN que exporte configuração
+   WireGuard (ficheiro `.conf`).
+
+Em qualquer um dos casos: abra `TunnelConfigActivity` (botão "Configurar
+VPN segura (WireGuard)" no ecrã principal), cole o conteúdo do `.conf`, e
+ligue. A configuração fica guardada com `EncryptedSharedPreferences`
+(`wireguard/SecureConfigStore.kt`) porque contém uma chave privada — nunca
+em texto simples.
 
 ## O que NÃO está implementado (por regra rígida do agente, não por falta de tempo)
 
@@ -67,6 +95,15 @@ exigiria uma decisão humana explícita, caso a caso.
   em reset de fábrica, via QR/NFC ou `adb shell dpm set-device-owner
   com.algoritmonatural.naturaguard/.deviceowner.DeviceOwnerReceiver` — não
   se torna Device Owner só por abrir a app.
+- **Segurança do Wi-Fi**: primeira vez vai pedir permissão de localização
+  (ou "dispositivos próximos" em Android 13+) — é exigência do próprio
+  Android para ler resultados de scan de Wi-Fi, não algo que a app peça
+  por gosto.
+- **Gateway/ARP**: no desktop/Termux (netguard) isto funciona sempre; no
+  telemóvel só funciona em Android <10 ou com root — nos outros casos vai
+  mostrar "não foi possível ler a tabela ARP", o que é esperado, não um bug.
+- **WireGuard**: sem um `.conf` válido colado primeiro, o botão "Ligar"
+  mostra um erro claro em vez de falhar silenciosamente.
 
 ## Relatório de conformidade
 

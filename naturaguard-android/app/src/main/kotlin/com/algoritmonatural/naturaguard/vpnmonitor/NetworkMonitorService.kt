@@ -36,6 +36,26 @@ class NetworkMonitorService : VpnService() {
         private const val CHANNEL_ID = "naturaguard_vpn_monitor"
         private const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.algoritmonatural.naturaguard.action.STOP_VPN_MONITOR"
+
+        /**
+         * Not "block these" — "notice these." A legitimate SSH session to
+         * your own server is normal; this just makes it visible in the
+         * report instead of invisible, same philosophy as netguard's
+         * router.watch_ports.
+         */
+        val SUSPICIOUS_PORTS = mapOf(
+            21 to "FTP",
+            22 to "SSH",
+            23 to "Telnet",
+            445 to "SMB",
+            1433 to "SQL Server",
+            3306 to "MySQL",
+            3389 to "RDP",
+            5432 to "PostgreSQL",
+            5900 to "VNC",
+            6379 to "Redis",
+            7547 to "TR-069/CWMP",
+        )
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -136,24 +156,41 @@ class NetworkMonitorService : VpnService() {
         val protocol = byteBuffer.get(9).toInt() and 0xFF
         val destAddress = formatIpv4(buffer, 16)
 
-        if (protocol == 6 && isSuspiciousManagementPort(buffer, length)) {
-            eventLogger.log(
-                SecurityEvent(
-                    type = "outbound_management_port",
-                    severity = Severity.WARNING,
-                    message = "Ligação de saída para porta de gestão (23/3389) detetada.",
-                    source = "vpnmonitor",
-                    extra = mapOf("destination" to destAddress),
-                )
-            )
+        if (protocol == 6 || protocol == 17) {
+            val destPort = readDestPort(buffer, length) ?: return
+            SUSPICIOUS_PORTS[destPort]?.let { label ->
+                flaggedPortLogger.logIfNew(destAddress, destPort, label)
+            }
         }
     }
 
-    private fun isSuspiciousManagementPort(buffer: ByteArray, length: Int): Boolean {
+    private fun readDestPort(buffer: ByteArray, length: Int): Int? {
         val ihl = (buffer[0].toInt() and 0x0F) * 4
-        if (length < ihl + 4) return false
-        val destPort = ((buffer[ihl + 2].toInt() and 0xFF) shl 8) or (buffer[ihl + 3].toInt() and 0xFF)
-        return destPort == 23 || destPort == 3389 // telnet, RDP
+        if (length < ihl + 4) return null
+        return ((buffer[ihl + 2].toInt() and 0xFF) shl 8) or (buffer[ihl + 3].toInt() and 0xFF)
+    }
+
+    /**
+     * Same destination:port pair only generates one event per session,
+     * not one per packet — a single SSH session is thousands of packets,
+     * and a flooded events.jsonl is as useless as no log at all.
+     */
+    private val flaggedPortLogger = object {
+        private val alreadyLogged = HashSet<String>()
+
+        fun logIfNew(destAddress: String, destPort: Int, label: String) {
+            val key = "$destAddress:$destPort"
+            if (!alreadyLogged.add(key)) return
+            eventLogger.log(
+                SecurityEvent(
+                    type = "outbound_sensitive_port",
+                    severity = Severity.WARNING,
+                    message = "Ligação de saída para porta sensível detetada: $label ($destPort).",
+                    source = "vpnmonitor",
+                    extra = mapOf("destination" to destAddress, "port" to destPort.toString(), "service" to label),
+                )
+            )
+        }
     }
 
     private fun formatIpv4(buffer: ByteArray, offset: Int): String =

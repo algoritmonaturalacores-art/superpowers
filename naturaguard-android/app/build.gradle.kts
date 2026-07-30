@@ -35,4 +35,12 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+
+    // Official WireGuard client for Android — do not replace with a
+    // hand-rolled tunnel implementation. https://git.zx2c4.com/wireguard-android/
+    implementation("com.wireguard.android:tunnel:1.0.20230706")
+
+    // EncryptedSharedPreferences, used to store the WireGuard config
+    // (which contains a private key) instead of plaintext prefs.
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }

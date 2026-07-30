@@ -9,11 +9,17 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.algoritmonatural.naturaguard.arpmonitor.GatewayCheckResult
+import com.algoritmonatural.naturaguard.arpmonitor.GatewayMonitor
 import com.algoritmonatural.naturaguard.deviceowner.DeviceOwnerReceiver
+import com.algoritmonatural.naturaguard.report.ReportActivity
 import com.algoritmonatural.naturaguard.rootdetection.RootDetector
 import com.algoritmonatural.naturaguard.shared.EventLogger
 import com.algoritmonatural.naturaguard.usageaudit.UsageAuditManager
 import com.algoritmonatural.naturaguard.vpnmonitor.NetworkMonitorService
+import com.algoritmonatural.naturaguard.wifisecurity.WifiSecurityChecker
+import com.algoritmonatural.naturaguard.wifisecurity.WifiSecurityLevel
+import com.algoritmonatural.naturaguard.wireguard.TunnelConfigActivity
 
 class MainActivity : Activity() {
 
@@ -59,6 +65,26 @@ class MainActivity : Activity() {
         root.addView(Button(this).apply {
             text = "Estado do modo dispositivo dedicado"
             setOnClickListener { checkDeviceOwnerStatus() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Verificar segurança do Wi-Fi atual"
+            setOnClickListener { runWifiSecurityCheck() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Verificar MAC do gateway (ARP)"
+            setOnClickListener { runGatewayCheck() }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Ver relatório de eventos"
+            setOnClickListener { startActivity(Intent(this@MainActivity, ReportActivity::class.java)) }
+        })
+
+        root.addView(Button(this).apply {
+            text = "Configurar VPN segura (WireGuard)"
+            setOnClickListener { startActivity(Intent(this@MainActivity, TunnelConfigActivity::class.java)) }
         })
 
         setContentView(root)
@@ -122,6 +148,40 @@ class MainActivity : Activity() {
         } else {
             "Modo dedicado não ativo. Funcionalidades de auditoria de outras apps " +
                 "permanecem bloqueadas até este modo ser aprovisionado com consentimento explícito."
+        }
+    }
+
+    private fun runWifiSecurityCheck() {
+        val checker = WifiSecurityChecker(this)
+        if (!checker.hasRequiredPermission()) {
+            Toast.makeText(
+                this,
+                "Conceda a permissão de Wi-Fi/localização pedida nas Definições da app para continuar.",
+                Toast.LENGTH_LONG,
+            ).show()
+            startActivity(checker.buildGrantAccessIntent())
+            return
+        }
+        val result = checker.checkCurrentNetwork()
+        statusText.text = if (result == null) {
+            "Não foi possível determinar a segurança da rede atual."
+        } else {
+            when (result.level) {
+                WifiSecurityLevel.OPEN -> "Rede Wi-Fi \"${result.ssid}\" está ABERTA — sem palavra-passe."
+                WifiSecurityLevel.WEP -> "Rede Wi-Fi \"${result.ssid}\" usa WEP — cifra obsoleta e quebrável."
+                WifiSecurityLevel.SECURE -> "Rede Wi-Fi \"${result.ssid}\" está protegida (WPA/WPA2/WPA3)."
+                WifiSecurityLevel.UNKNOWN -> "Segurança da rede \"${result.ssid}\" desconhecida."
+            }
+        }
+    }
+
+    private fun runGatewayCheck() {
+        when (GatewayMonitor(this).checkGatewayMac()) {
+            GatewayCheckResult.UNCHANGED -> statusText.text = "MAC do gateway igual ao registado — sem alterações."
+            GatewayCheckResult.CHANGED -> statusText.text = "ALERTA: MAC do gateway mudou — ver relatório."
+            GatewayCheckResult.FIRST_SEEN -> statusText.text = "MAC do gateway registado pela primeira vez."
+            GatewayCheckResult.DEGRADED -> statusText.text =
+                "Não foi possível ler a tabela ARP neste dispositivo (normal sem root em Android 10+)."
         }
     }
 }
